@@ -1,0 +1,4 @@
+github.com/photostorm/gatt v0.0.0-20201128210245-1c941537125d h1:py/yVRfzomlrkytMn0NVAtTnLrnojjBj+HQ5AOg+Syk=
+github.com/photostorm/gatt v0.0.0-20201128210245-1c941537125d/go.mod h1:qqLgQ06b392ZMnq/lPMHk3qe/8MMx+E/adPTsWBhd90=
+golang.org/x/sys v0.0.0-20201126233918-771906719818 h1:f1CIuDlJhwANEC2MM87MBEVMr3jl5bifgsfj90XAF9c=
+golang.org/x/sys v0.0.0-20201126233918-771906719818/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
