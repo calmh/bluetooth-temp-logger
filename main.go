@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strings"
@@ -12,6 +14,22 @@ import (
 
 	"github.com/photostorm/gatt"
 	"github.com/photostorm/gatt/examples/option"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+)
+
+var (
+	airTemp = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "btl",
+		Subsystem: "sensorbug",
+		Name:      "temperature_c",
+	}, []string{"unit"})
+	battery = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "btl",
+		Subsystem: "sensorbug",
+		Name:      "battery_percent",
+	}, []string{"unit"})
 )
 
 func main() {
@@ -33,6 +51,14 @@ func main() {
 		log.Fatalln("Failed to init device:", err)
 	}
 
+	go func() {
+		http.Handle("/metrics", promhttp.Handler())
+		if err := http.ListenAndServe(":9298", nil); err != nil {
+			log.Fatalln("HTTP listen:", err)
+		}
+	}()
+
+	log.Println("Running")
 	s.serve()
 
 	d.StopScanning()
@@ -109,16 +135,61 @@ func (s *state) onDiscovery(p gatt.Peripheral, a *gatt.Advertisement, rssi int) 
 	}
 
 	batt := int(a.ManufacturerData[5])
+	battery.WithLabelValues(p.ID()).Set(float64(batt))
 
 	var str strings.Builder
 	fmt.Fprintf(&str, "batt:%d%%", batt)
 
 	rest := a.ManufacturerData[7:]
-	if len(rest) > 0 {
-		switch rest[0] & 0x3f {
-		case 3:
+	// fmt.Fprintf(&str, " manuf:%x", rest)
+	for len(rest) > 0 {
+		dataType := rest[0] & 0b00_111111
+		hasData := rest[0]&0b01_000000 != 0
+		hasAlert := rest[0]&0b10_000000 != 0
+		rest = rest[1:]
+
+		if hasAlert {
+			rest = rest[1:]
+		}
+		if !hasData {
+			continue
+		}
+
+		switch dataType {
+		case 0x01:
+			// Accellerometer
+			// info about alerts only, uninteresting
+			rest = rest[2:]
+
+		case 0x02:
+			// Light
+			isIR := rest[0]&0b1_0_00_00_00 != 0
+			dataResolution := rest[0] & 0b0_0_11_00_00 >> 4
+			dataRange := rest[0] & 0b0_0_00_11_00 >> 2
+			dataLen := rest[0] & 0b0_0_00_00_11
+			var data uint16
+			if dataLen == 2 {
+				data = binary.LittleEndian.Uint16(rest[1:])
+			} else {
+				data = uint16(rest[1])
+			}
+			fmt.Fprintf(&str, " light:%v/%d/%d/%d", isIR, dataResolution, dataRange, data)
+			rest = rest[1+int(dataLen):]
+
+		case 0x03:
 			// Temperature
-			fmt.Fprintf(&str, " temp:%.01f°C", 0.0625*float64(rest[1]))
+			temp := 0.0625 * float64(int16(binary.LittleEndian.Uint16(rest)))
+			fmt.Fprintf(&str, " temp:%.01f°C", temp)
+			airTemp.WithLabelValues(p.ID()).Set(temp)
+			rest = rest[2:]
+
+		case 0x2f:
+			// Pairing, don't case
+			rest = rest[1:]
+
+		case 0x3f:
+			// Encryption pairing, we're done
+			rest = nil
 		}
 	}
 
